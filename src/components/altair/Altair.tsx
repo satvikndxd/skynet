@@ -17,14 +17,21 @@ import { type FunctionDeclaration, SchemaType } from "@google/generative-ai";
 import { useEffect, useRef, useState, memo } from "react";
 import vegaEmbed from "vega-embed";
 import { useLiveAPIContext } from "../../contexts/LiveAPIContext";
-import { ToolCall } from "../../multimodal-live-types";
+import { ToolCall, LiveConfig } from "../../multimodal-live-types";
 import { Tool } from "../../lib/mcp-client-manager";
 
 // Convert MCP tool to Gemini function declaration
-function convertMCPToolToFunctionDeclaration(tool: Tool): FunctionDeclaration | undefined {
-  if (!tool.inputSchema || !tool.inputSchema.properties) {
-    console.error('Invalid tool schema:', tool);
-    return undefined;
+function convertToolToFunctionDeclaration(tool: Tool): FunctionDeclaration {
+  if (!tool.inputSchema?.properties) {
+    return {
+      name: tool.name,
+      description: tool.description || '',
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {},
+        required: []
+      }
+    };
   }
 
   return {
@@ -33,15 +40,20 @@ function convertMCPToolToFunctionDeclaration(tool: Tool): FunctionDeclaration | 
     parameters: {
       type: SchemaType.OBJECT,
       properties: Object.entries(tool.inputSchema.properties).reduce((acc, [key, prop]) => {
-        acc[key] = {
-          type: prop.type === 'array' ? SchemaType.ARRAY : SchemaType.STRING,
-          description: prop.description || `Parameter ${key} for ${tool.name}`,
-          ...(prop.type === 'array' && prop.items ? {
+        if (prop.type === 'array' && prop.items) {
+          acc[key] = {
+            type: SchemaType.ARRAY,
             items: {
-              type: prop.items.type === 'object' ? SchemaType.OBJECT : SchemaType.STRING
-            }
-          } : {})
-        };
+              type: prop.items.type === 'string' ? SchemaType.STRING : SchemaType.OBJECT
+            },
+            description: prop.description || `Parameter ${key} for ${tool.name}`
+          };
+        } else {
+          acc[key] = {
+            type: SchemaType.STRING,
+            description: prop.description || `Parameter ${key} for ${tool.name}`
+          };
+        }
         return acc;
       }, {} as Record<string, any>),
       required: tool.inputSchema.required || []
@@ -54,6 +66,7 @@ function AltairComponent() {
   const { client, setConfig } = useLiveAPIContext();
   const [mcpTools, setMcpTools] = useState<Tool[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
+  const embedRef = useRef<HTMLDivElement>(null);
 
   // Connect to MCP server and get tools
   useEffect(() => {
@@ -61,56 +74,73 @@ function AltairComponent() {
     wsRef.current = ws;
 
     ws.onopen = () => {
-      console.log('Connected to MCP server');
-      ws.send(JSON.stringify({ type: 'list_tools' }));
+      console.log('Connected to MCP server, requesting tools...');
+      ws.send(JSON.stringify({ type: 'tools_list' }));
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+
+    ws.onclose = () => {
+      console.log('WebSocket connection closed');
     };
 
     ws.onmessage = (event) => {
+      console.log('Received WebSocket message:', event.data);
       const data = JSON.parse(event.data);
+      console.log('Parsed message data:', data);
+
       if (data.type === 'tools_list') {
+        if (!Array.isArray(data.tools)) {
+          console.error('Invalid tools data:', data);
+          return;
+        }
+        console.log('Received MCP tools:', JSON.stringify(data.tools, null, 2));
         setMcpTools(data.tools);
       } else if (data.type === 'tool_response') {
+        console.log('Received tool response:', data);
         client.sendToolResponse({
           functionResponses: [{
             response: data.response,
-            id: data.requestId
+            id: data.id
           }]
         });
+      } else if (data.type === 'error') {
+        console.error('Received error from server:', data.error);
       }
     };
 
     return () => {
-      ws.close();
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
     };
-  }, []);
+  }, [client]);
 
   // Update Gemini config when MCP tools are loaded
   useEffect(() => {
-    // Take just the first tool for testing
-    if (mcpTools.length === 0) return;
+    console.log('mcpTools changed:', mcpTools);
+    if (mcpTools.length === 0) {
+      console.log('No MCP tools available yet');
+      return;
+    }
 
-    console.log('First MCP tool:', mcpTools[0]); // Log the original tool
+    // Take the first four tools
+    const selectedTools = mcpTools.slice(0, 4);
+    console.log('Selected tools for conversion:', JSON.stringify(selectedTools, null, 2));
 
-    const testTool = mcpTools[0];
-    const testDeclaration = {
-      name: testTool.name,
-      description: testTool.description,
-      parameters: {
-        type: SchemaType.OBJECT,
-        properties: Object.entries(testTool.inputSchema.properties).reduce((acc, [key, prop]) => {
-          acc[key] = {
-            type: SchemaType.STRING,
-            description: prop.description || `Parameter ${key} for ${testTool.name}`
-          };
-          return acc;
-        }, {} as Record<string, any>),
-        required: testTool.inputSchema.required || []
-      }
-    };
+    // Convert selected tools into function declarations
+    const functionDeclarations = selectedTools.map((tool: Tool) => {
+      console.log('Converting tool:', tool.name);
+      const declaration = convertToolToFunctionDeclaration(tool);
+      console.log(`Converted tool ${tool.name}:`, JSON.stringify(declaration, null, 2));
+      return declaration;
+    });
 
-    console.log('Converted declaration:', testDeclaration); // Log the converted declaration
+    console.log('All function declarations:', JSON.stringify(functionDeclarations, null, 2));
 
-    setConfig({
+    const config: LiveConfig = {
       model: "models/gemini-2.0-flash-exp",
       generationConfig: {
         responseModalities: "audio",
@@ -121,24 +151,32 @@ function AltairComponent() {
       systemInstruction: {
         parts: [
           {
-            text: `You are my helpful assistant. You have access to the following tool:\n- ${testTool.name}: ${testTool.description}`,
+            text: `You are my helpful assistant. You have access to these tools for reading, writing files and creating directories. When I ask about file operations, use these tools to help me. Don't ask for additional information, just make your best judgment based on the tools available.`,
           },
         ],
       },
       tools: [
         { googleSearch: {} },
-        { functionDeclarations: [testDeclaration] }
+        { functionDeclarations: functionDeclarations }
       ],
+    };
+
+    console.log('Final config being sent to Gemini:', {
+      model: config.model,
+      tools: config.tools,
+      functionDeclarations: functionDeclarations
     });
+    
+    setConfig(config);
   }, [setConfig, mcpTools]);
 
   // Handle tool calls
   useEffect(() => {
-    const onToolCall = async (toolCall: ToolCall) => {
-      console.log('Tool call received:', toolCall);
+    const onToolCall = (toolCall: ToolCall) => {
+      console.log(`got toolcall`, toolCall);
       
       for (const fc of toolCall.functionCalls) {
-        const tool = mcpTools.find(t => t.name === fc.name);
+        const tool = mcpTools.find((t: Tool) => t.name === fc.name);
         if (!tool) {
           console.error(`Unknown tool: ${fc.name}`);
           client.sendToolResponse({
@@ -150,26 +188,13 @@ function AltairComponent() {
           continue;
         }
 
-        try {
-          if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({
-              type: 'call_tool',
-              serverName: tool.serverName,
-              toolName: fc.name,
-              args: fc.args,
-              requestId: fc.id
-            }));
-          } else {
-            throw new Error('WebSocket connection not available');
-          }
-        } catch (error) {
-          console.error('Error calling tool:', error);
-          client.sendToolResponse({
-            functionResponses: [{
-              response: { error: error instanceof Error ? error.message : 'Unknown error' },
-              id: fc.id
-            }]
-          });
+        if (wsRef.current) {
+          wsRef.current.send(JSON.stringify({
+            type: 'tool_call',
+            name: fc.name,
+            args: fc.args,
+            id: fc.id
+          }));
         }
       }
     };
@@ -179,8 +204,6 @@ function AltairComponent() {
       client.off("toolcall", onToolCall);
     };
   }, [client, mcpTools]);
-
-  const embedRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (embedRef.current && jsonString) {
