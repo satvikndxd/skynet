@@ -8,9 +8,15 @@
         "/Users/avijitsarkar/Desktop"
       ]
     },
-    "youtube-transcript": {
+    "github": {
       "command": "npx",
-      "args": ["-y", "@kimtaeyoon83/mcp-server-youtube-transcript"]
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "<Enter GITHUB_PERSONAL_ACCESS_TOKEN"
+      }
     }
   }
 }

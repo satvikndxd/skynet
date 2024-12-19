@@ -111,7 +111,22 @@ export function Altair() {
   }, [embedRef, jsonString]);
   return <div className="vega-embed" ref={embedRef} />;
 }
+
+## Configuration
+
+The application requires configuration files for MCP tools. To set up:
+
+1. Copy the example configs:
+```bash
+cp mcp-config.example.json mcp-config.json
+cp public/mcp-config.example.json public/mcp-config.json
 ```
+
+2. Edit the config files with your settings:
+- `mcp-config.json`: Main configuration for MCP tools
+- `public/mcp-config.json`: Public configuration for web client
+
+Note: The actual config files are gitignored to prevent committing sensitive information.
 
 ## development
 

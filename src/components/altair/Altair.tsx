@@ -20,8 +20,57 @@ import { useLiveAPIContext } from "../../contexts/LiveAPIContext";
 import { ToolCall, LiveConfig } from "../../multimodal-live-types";
 import { Tool } from "../../lib/mcp-client-manager";
 
+// Validate if a tool's schema is compatible with Gemini
+function isValidToolSchema(tool: Tool): boolean {
+  // Must have inputSchema with properties
+  if (!tool.inputSchema?.properties) {
+    console.log(`Tool ${tool.name} skipped: Missing inputSchema or properties`);
+    return false;
+  }
+
+  // Must have required fields defined (even if empty)
+  if (!Array.isArray(tool.inputSchema.required)) {
+    console.log(`Tool ${tool.name} skipped: Missing or invalid required fields`);
+    return false;
+  }
+
+  // All properties must have type
+  const hasValidProperties = Object.entries(tool.inputSchema.properties).every(([key, prop]: [string, any]) => {
+    if (!prop.type) {
+      console.log(`Tool ${tool.name} skipped: Property ${key} missing type`);
+      return false;
+    }
+
+    // For array types, validate items
+    if (prop.type === 'array' && prop.items) {
+      if (!prop.items.type) {
+        console.log(`Tool ${tool.name} skipped: Array items missing type in property ${key}`);
+        return false;
+      }
+      
+      // If items are objects, they must have properties and required fields
+      if (prop.items.type === 'object') {
+        if (!prop.items.properties || !Array.isArray(prop.items.required)) {
+          console.log(`Tool ${tool.name} skipped: Invalid object items in array property ${key}`);
+          return false;
+        }
+      }
+    }
+
+    return true;
+  });
+
+  if (!hasValidProperties) {
+    return false;
+  }
+
+  return true;
+}
+
 // Convert MCP tool to Gemini function declaration
 function convertToolToFunctionDeclaration(tool: Tool): FunctionDeclaration {
+  console.log(`Converting tool ${tool.name}:`, JSON.stringify(tool.inputSchema, null, 2));
+  
   if (!tool.inputSchema?.properties) {
     return {
       name: tool.name,
@@ -34,44 +83,90 @@ function convertToolToFunctionDeclaration(tool: Tool): FunctionDeclaration {
     };
   }
 
-  return {
+  const convertedProperties: Record<string, any> = {};
+  
+  Object.entries(tool.inputSchema.properties).forEach(([key, prop]: [string, any]) => {
+    console.log(`Converting property ${key}:`, JSON.stringify(prop, null, 2));
+    
+    if (prop.type === 'array') {
+      convertedProperties[key] = {
+        type: SchemaType.ARRAY,
+        items: {
+          type: prop.items?.type === 'string' ? SchemaType.STRING : 
+                prop.items?.type === 'number' ? SchemaType.NUMBER :
+                prop.items?.type === 'boolean' ? SchemaType.BOOLEAN :
+                prop.items?.type === 'object' ? SchemaType.OBJECT :
+                SchemaType.STRING
+        },
+        description: prop.description || ''
+      };
+      
+      // Handle array of objects
+      if (prop.items?.properties) {
+        convertedProperties[key].items.properties = Object.entries(prop.items.properties).reduce<Record<string, any>>((acc, [subKey, subProp]: [string, any]) => {
+          acc[subKey] = {
+            type: subProp.type === 'string' ? SchemaType.STRING :
+                  subProp.type === 'number' ? SchemaType.NUMBER :
+                  subProp.type === 'boolean' ? SchemaType.BOOLEAN :
+                  SchemaType.OBJECT,
+            description: subProp.description || ''
+          };
+          return acc;
+        }, {});
+        convertedProperties[key].items.required = prop.items.required || [];
+      }
+    } else {
+      convertedProperties[key] = {
+        type: prop.type === 'string' ? SchemaType.STRING :
+              prop.type === 'number' ? SchemaType.NUMBER :
+              prop.type === 'boolean' ? SchemaType.BOOLEAN :
+              SchemaType.OBJECT,
+        description: prop.description || ''
+      };
+    }
+  });
+
+  const result = {
     name: tool.name,
     description: tool.description,
     parameters: {
       type: SchemaType.OBJECT,
-      properties: Object.entries(tool.inputSchema.properties).reduce((acc, [key, prop]) => {
-        if (prop.type === 'array' && prop.items) {
-          acc[key] = {
-            type: SchemaType.ARRAY,
-            items: {
-              type: prop.items.type === 'string' ? SchemaType.STRING : SchemaType.OBJECT
-            },
-            description: prop.description || `Parameter ${key} for ${tool.name}`
-          };
-        } else {
-          acc[key] = {
-            type: SchemaType.STRING,
-            description: prop.description || `Parameter ${key} for ${tool.name}`
-          };
-        }
-        return acc;
-      }, {} as Record<string, any>),
+      properties: convertedProperties,
       required: tool.inputSchema.required || []
     }
   };
+
+  console.log(`Converted result for ${tool.name}:`, JSON.stringify(result, null, 2));
+  return result;
+}
+
+// Send tool schema issues to server
+function logToolSchemaIssue(ws: WebSocket | null, tool: Tool, issue: string) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      type: 'client_log',
+      message: `Tool Schema Issue: ${tool.name}`,
+      data: {
+        tool: tool.name,
+        server: tool.serverName,
+        issue,
+        schema: tool.inputSchema
+      }
+    }));
+  }
 }
 
 function AltairComponent() {
   const [jsonString, setJSONString] = useState<string>("");
   const { client, setConfig } = useLiveAPIContext();
   const [mcpTools, setMcpTools] = useState<Tool[]>([]);
-  const wsRef = useRef<WebSocket | null>(null);
+  const [ws, setWs] = useState<WebSocket | null>(null);
   const embedRef = useRef<HTMLDivElement>(null);
 
   // Connect to MCP server and get tools
   useEffect(() => {
     const ws = new WebSocket('ws://localhost:3001');
-    wsRef.current = ws;
+    setWs(ws);
 
     ws.onopen = () => {
       console.log('Connected to MCP server, requesting tools...');
@@ -112,8 +207,8 @@ function AltairComponent() {
     };
 
     return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
+      if (ws) {
+        ws.close();
       }
     };
   }, [client]);
@@ -126,19 +221,48 @@ function AltairComponent() {
       return;
     }
 
-    // Take N-1 tools (where N is total number of tools)
-    const selectedTools = mcpTools.slice(0, mcpTools.length - 1);
-    console.log('Selected tools for conversion:', JSON.stringify(selectedTools, null, 2));
+    console.log('Total tools:', mcpTools.length);
+    console.log('Tools by server:');
+    const byServer = mcpTools.reduce((acc, tool, index) => {
+      acc[tool.serverName] = acc[tool.serverName] || [];
+      acc[tool.serverName].push({ ...tool, index });
+      return acc;
+    }, {} as Record<string, any[]>);
+    console.log(byServer);
+
+    // Check each tool's schema and log issues
+    mcpTools.forEach(tool => {
+      if (!tool.inputSchema?.$schema) {
+        logToolSchemaIssue(ws, tool, 'Missing $schema field in inputSchema');
+      }
+      if (tool.inputSchema?.additionalProperties === undefined) {
+        logToolSchemaIssue(ws, tool, 'Missing additionalProperties field in inputSchema');
+      }
+    });
+
+    // Skip tools that don't have the full schema structure
+    const lastFilesystemTool = mcpTools.findIndex(tool => 
+      tool.serverName === 'filesystem' && !tool.inputSchema?.$schema);
+    console.log('Last filesystem tool without schema:', lastFilesystemTool);
+
+    // Take all tools except the problematic ones
+    const selectedTools = [
+      ...mcpTools.slice(0, lastFilesystemTool), // Tools before the problematic one
+      ...mcpTools.slice(lastFilesystemTool + 1, mcpTools.length - 1) // Remaining tools except last
+    ];
+    console.log('Selected tools:', selectedTools.map(t => ({
+      name: t.name,
+      server: t.serverName,
+      schema: t.inputSchema
+    })));
 
     // Convert selected tools into function declarations
     const functionDeclarations = selectedTools.map((tool: Tool) => {
-      console.log('Converting tool:', tool.name);
+      console.log(`Converting tool ${tool.name} from ${tool.serverName}`);
       const declaration = convertToolToFunctionDeclaration(tool);
-      console.log(`Converted tool ${tool.name}:`, JSON.stringify(declaration, null, 2));
+      console.log(`Converted ${tool.name} to:`, declaration);
       return declaration;
     });
-
-    console.log('All function declarations:', JSON.stringify(functionDeclarations, null, 2));
 
     const config: LiveConfig = {
       model: "models/gemini-2.0-flash-exp",
@@ -164,11 +288,14 @@ function AltairComponent() {
     console.log('Final config being sent to Gemini:', {
       model: config.model,
       tools: config.tools,
-      functionDeclarations: functionDeclarations
+      functionDeclarations: functionDeclarations.map(fd => ({
+        name: fd.name,
+        params: fd.parameters
+      }))
     });
     
     setConfig(config);
-  }, [setConfig, mcpTools]);
+  }, [setConfig, mcpTools, ws]);
 
   // Handle tool calls
   useEffect(() => {
@@ -201,8 +328,8 @@ function AltairComponent() {
 
         console.log('Sending MCP tool request:', JSON.stringify(mcpRequest, null, 2));
         
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify(mcpRequest));
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(mcpRequest));
         } else {
           console.error('WebSocket is not open');
           client.sendToolResponse({
@@ -219,7 +346,7 @@ function AltairComponent() {
     return () => {
       client.off("toolcall", onToolCall);
     };
-  }, [client, mcpTools]);
+  }, [client, mcpTools, ws]);
 
   useEffect(() => {
     if (embedRef.current && jsonString) {
