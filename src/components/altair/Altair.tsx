@@ -126,8 +126,8 @@ function AltairComponent() {
       return;
     }
 
-    // Take all nine tools
-    const selectedTools = mcpTools.slice(0, 8);
+    // Take N-1 tools (where N is total number of tools)
+    const selectedTools = mcpTools.slice(0, mcpTools.length - 1);
     console.log('Selected tools for conversion:', JSON.stringify(selectedTools, null, 2));
 
     // Convert selected tools into function declarations
@@ -173,30 +173,46 @@ function AltairComponent() {
   // Handle tool calls
   useEffect(() => {
     const onToolCall = (toolCall: ToolCall) => {
-      console.log(`got toolcall`, toolCall);
-      
-      for (const fc of toolCall.functionCalls) {
-        const tool = mcpTools.find((t: Tool) => t.name === fc.name);
-        if (!tool) {
-          console.error(`Unknown tool: ${fc.name}`);
+      console.log(`Received tool call from Gemini:`, toolCall);
+
+      // Handle each function call
+      toolCall.functionCalls.forEach((fc) => {
+        // Find the corresponding MCP tool
+        const mcpTool = mcpTools.find(tool => tool.name === fc.name);
+        if (!mcpTool) {
+          console.error(`Tool ${fc.name} not found in MCP tools`);
           client.sendToolResponse({
             functionResponses: [{
-              response: { error: `Unknown tool: ${fc.name}` },
+              response: { error: `Tool ${fc.name} not found` },
               id: fc.id
             }]
           });
-          continue;
+          return;
         }
 
-        if (wsRef.current) {
-          wsRef.current.send(JSON.stringify({
-            type: 'tool_call',
-            name: fc.name,
-            args: fc.args,
-            id: fc.id
-          }));
+        // Convert Gemini args to MCP format
+        const mcpRequest = {
+          type: 'call_tool',
+          toolName: mcpTool.name,
+          serverName: mcpTool.serverName,
+          args: fc.args,
+          requestId: fc.id
+        };
+
+        console.log('Sending MCP tool request:', JSON.stringify(mcpRequest, null, 2));
+        
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify(mcpRequest));
+        } else {
+          console.error('WebSocket is not open');
+          client.sendToolResponse({
+            functionResponses: [{
+              response: { error: 'WebSocket connection is not available' },
+              id: fc.id
+            }]
+          });
         }
-      }
+      });
     };
 
     client.on("toolcall", onToolCall);
