@@ -126,8 +126,8 @@ function AltairComponent() {
       return;
     }
 
-    // Take the first four tools
-    const selectedTools = mcpTools.slice(0, 4);
+    // Take all nine tools
+    const selectedTools = mcpTools.slice(0, 8);
     console.log('Selected tools for conversion:', JSON.stringify(selectedTools, null, 2));
 
     // Convert selected tools into function declarations
@@ -151,7 +151,7 @@ function AltairComponent() {
       systemInstruction: {
         parts: [
           {
-            text: `You are my helpful assistant. You have access to these tools for reading, writing files and creating directories. When I ask about file operations, use these tools to help me. Don't ask for additional information, just make your best judgment based on the tools available.`,
+            text: `You are my helpful assistant. You have access to these tools for reading, writing, listing, searching, and managing files and directories. When I ask about file operations, use these tools to help me. Don't ask for additional information, just make your best judgment based on the tools available.`,
           },
         ],
       },
