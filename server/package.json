@@ -1,0 +1,16 @@
+{
+  "name": "mcp-proxy-server",
+  "version": "1.0.0",
+  "description": "WebSocket proxy server for MCP implementations",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "@modelcontextprotocol/server-github": "^0.6.2",
+    "dotenv": "^16.3.1",
+    "ws": "^8.16.0"
+  }
+}
