@@ -114,19 +114,17 @@ export function Altair() {
 
 ## Configuration
 
-The application requires configuration files for MCP tools. To set up:
+The application requires a configuration file for MCP tools. To set up:
 
-1. Copy the example configs:
+1. Copy the example config:
 ```bash
 cp mcp-config.example.json mcp-config.json
-cp public/mcp-config.example.json public/mcp-config.json
 ```
 
-2. Edit the config files with your settings:
-- `mcp-config.json`: Main configuration for MCP tools
-- `public/mcp-config.json`: Public configuration for web client
+2. Edit the config file with your settings:
+- `mcp-config.json`: Configuration for MCP tools and server settings
 
-Note: The actual config files are gitignored to prevent committing sensitive information.
+Note: The actual config file is gitignored to prevent committing sensitive information.
 
 ## development
 
