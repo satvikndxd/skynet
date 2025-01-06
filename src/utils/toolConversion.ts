@@ -133,8 +133,8 @@ export function filterAndConvertTools(tools: Tool[]): FunctionDeclaration[] {
 }
 
 export function logToolSchemaIssue(ws: WebSocket | null, tool: Tool, issue: string) {
-  console.warn(`Schema issue for tool ${tool.name}: ${issue}`);
-  if (ws?.readyState === WebSocket.OPEN) {
+  console.log(`Schema issue for tool ${tool.name} from server ${tool.serverName}: ${issue}`);
+  if (ws) {
     ws.send(JSON.stringify({
       type: 'tool_schema_issue',
       tool: tool.name,

@@ -62,7 +62,10 @@ function AltairComponent() {
         console.log('Received tool response:', data);
         client.sendToolResponse({
           functionResponses: [{
-            response: data.response,
+            response: {
+              type: 'text',
+              text: JSON.stringify(data.response)  // Convert response to text
+            },
             id: data.id
           }]
         });
@@ -102,7 +105,7 @@ function AltairComponent() {
     const config: LiveConfig = {
       model: "models/gemini-2.0-flash-exp",
       generationConfig: {
-        responseModalities: "audio",
+        responseModalities: "text",
         speechConfig: {
           voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } },
         },

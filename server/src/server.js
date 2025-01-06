@@ -71,12 +71,43 @@ async function initializeMCPClient(name, config) {
     // Wait for server initialization
     await new Promise(resolve => setTimeout(resolve, 1000));
 
-    // Get available tools
+    // Get available tools with their schemas
     const response = await client.listTools();
     if (response && response.tools) {
       console.log(`${name} MCP Server tools loaded:`, response.tools.length);
-      mcpClients.set(name, { client, tools: response.tools });
-      return { client, tools: response.tools };
+      
+      // Store tools with their schemas
+      const toolsWithSchemas = response.tools.map(tool => ({
+        ...tool,
+        outputSchema: tool.outputSchema || {
+          type: 'object',
+          properties: {
+            toolResult: {
+              type: 'object',
+              properties: {
+                content: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      type: { type: 'string' },
+                      text: { type: 'string' }
+                    }
+                  }
+                },
+                isError: { type: 'boolean' }
+              }
+            }
+          }
+        }
+      }));
+      
+      mcpClients.set(name, { 
+        client, 
+        tools: toolsWithSchemas
+      });
+      
+      return { client, tools: toolsWithSchemas };
     } else {
       console.log(`${name} MCP Server responded but no tools found`);
       mcpClients.set(name, { client, tools: [] });
@@ -123,72 +154,121 @@ wss.on('connection', function connection(ws) {
   ws.on('message', async function incoming(message) {
     try {
       const request = JSON.parse(message);
-      log('REQUEST', `Received ${request.type} request`, request);
-      
+      log('REQUEST', 'Received ' + request.type + ' request', request);
+
       switch (request.type) {
-        case 'list_tools':
-          const tools = Array.from(mcpClients.entries()).flatMap(([serverName, { tools }]) => 
-            (tools || []).map(tool => ({
-              ...tool,
-              serverName
-            }))
-          );
-          log('TOOLS_LIST', 'Sending tools list', { toolCount: tools.length });
+        case 'tools_list': {
+          const toolsList = [];
+          for (const [serverName, clientInfo] of mcpClients.entries()) {
+            if (clientInfo.tools) {
+              toolsList.push(...clientInfo.tools.map(tool => ({
+                ...tool,
+                serverName
+              })));
+            }
+          }
+          log('TOOLS_LIST', 'Sending tools list', {
+            count: toolsList.length,
+            servers: Array.from(mcpClients.keys())
+          });
           ws.send(JSON.stringify({
             type: 'tools_list',
-            tools
+            tools: toolsList
           }));
           break;
+        }
 
-        case 'client_log':
-          log('CLIENT', request.message, request.data);
+        case 'tool_schema_issue': {
+          const { tool, server, issue } = request;
+          if (!server) {
+            log('SCHEMA_ISSUE', `Tool ${tool} schema issue: ${issue}`, {
+              tool,
+              issue,
+              source: 'validation'
+            });
+          } else {
+            log('SCHEMA_ISSUE', `Tool ${tool} on server ${server} has schema issue: ${issue}`, {
+              tool,
+              server,
+              issue,
+              source: 'server'
+            });
+          }
           break;
+        }
 
         case 'call_tool': {
           const { serverName, toolName, args, requestId } = request;
-          log('TOOL_CALL', `Calling tool ${toolName} on server ${serverName}`, { args });
-          
-          const clientInfo = mcpClients.get(serverName);
-          if (!clientInfo) {
-            throw new Error(`MCP server ${serverName} not found`);
-          }
+          let toolResponse = null;
+          let responseContent = null;
 
           try {
-            log('TOOL_DEBUG', 'Original tool schema:', 
-              clientInfo.tools.find(t => t.name === toolName)?.parameters
-            );
+            log('TOOL_CALL', `Calling tool ${toolName} on server ${serverName}`, { args });
 
-            const toolResponse = await clientInfo.client.callTool({
+            const clientInfo = mcpClients.get(serverName);
+            if (!clientInfo) {
+              throw new Error(`Server ${serverName} not found`);
+            }
+
+            toolResponse = await clientInfo.client.callTool({
               name: toolName,
               arguments: args
             });
 
-            log('TOOL_RESPONSE', `Tool ${toolName} executed successfully`, toolResponse);
+            log('TOOL_DEBUG', 'Raw tool response', {
+              toolName,
+              response: toolResponse,
+              hasToolResult: !!toolResponse?.toolResult,
+              hasContent: !!toolResponse?.toolResult?.content,
+              type: typeof toolResponse
+            });
+
+            // Extract content from tool response
+            let responseContent;
+            
+            if (toolResponse?.toolResult?.content) {
+              // Tool returns MCP format, extract just the content array
+              responseContent = toolResponse.toolResult.content;
+            } else if (typeof toolResponse === 'string') {
+              // Plain string response
+              responseContent = [{
+                type: "text",
+                text: toolResponse
+              }];
+            } else {
+              // Other response types
+              responseContent = [{
+                type: "text",
+                text: JSON.stringify(toolResponse)
+              }];
+            }
+
+            log('RESPONSE_DEBUG', 'Formatted response', responseContent);
 
             // Send response back to client
             ws.send(JSON.stringify({
               type: 'tool_response',
-              requestId,
-              response: {
-                output: {
-                  success: true,
-                  result: typeof toolResponse === 'string' ? toolResponse : JSON.stringify(toolResponse)
-                }
-              }
+              id: requestId,
+              response: responseContent  // Send raw response
             }));
           } catch (error) {
-            log('TOOL_ERROR', `Tool ${toolName} execution failed`, { error: error.message });
+            log('TOOL_ERROR', `Tool ${toolName} execution failed`, {
+              error: error.message,
+              toolResponse: toolResponse || 'No response received',
+              responseContent: responseContent || 'No content formatted'
+            });
+            
+            // Send error response
             ws.send(JSON.stringify({
               type: 'error',
               requestId,
-              error: `Tool execution failed: ${error.message}`
+              error: error.message
             }));
           }
           break;
         }
 
         default:
-          log('ERROR', `Unknown request type: ${request.type}`);
           throw new Error(`Unknown request type: ${request.type}`);
       }
     } catch (error) {
