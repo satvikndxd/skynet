@@ -105,7 +105,7 @@ function AltairComponent() {
     const config: LiveConfig = {
       model: "models/gemini-2.0-flash-exp",
       generationConfig: {
-        responseModalities: "text",
+        responseModalities: "audio",
         speechConfig: {
           voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } },
         },
