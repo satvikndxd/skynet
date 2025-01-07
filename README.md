@@ -1,5 +1,7 @@
 # Multimodal Live API - Web console - Customized Guide by Kno2gether
 
+## Now Updated to Work with Anthropic MCP Server 
+
 ## 🎥 DeepDive Video
 
 Watch the DeepDive Session on Our YouTube Channel:
@@ -7,6 +9,22 @@ Watch the DeepDive Session on Our YouTube Channel:
 <p align="center">
     <a href="https://www.youtube.com/watch?v=vxvAYP6qnGA">
         <img src="https://img.youtube.com/vi/vxvAYP6qnGA/0.jpg" alt="Gemini 2.0 DeepDive" width="560" height="315">
+    </a>
+</p>
+
+<p align="center">
+    <a href="https://www.youtube.com/channel/UCxgkN3luQgLQOd_L7tbOdhQ?sub_confirmation=1">
+        <img src="https://img.shields.io/badge/Subscribe-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="Subscribe">
+    </a>
+</p>
+
+## 🎥 Improved JARVIS Video
+
+Watch the Improved Gemini 2.0 with MCP Coding Deepdive Session on Our YouTube Channel:
+
+<p align="center">
+    <a href="https://www.youtube.com/watch?v=A9QPdoQxhf0">
+        <img src="https://img.youtube.com/vi/A9QPdoQxhf0/0.jpg" alt="Gemini 2.0 DeepDive" width="560" height="315">
     </a>
 </p>
 
