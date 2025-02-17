@@ -37,10 +37,7 @@ export GOOGLE_API_KEY=your_api_key_here
 
 ## Usage
 
-1. Start the application:
-```bash
-python app.py
-```
+1. Start the application
 
 2. Open your browser and navigate to `http://localhost:5000`
 
