@@ -1,7 +1,6 @@
 # Gemini Multimodal Playground
 
-A web application that demonstrates the capabilities of Google's Gemini Pro Vision model for multimodal interactions. This playground allows users to experiment with image and text inputs to explore 
-the model's understanding and response generation.
+A web application that demonstrates the capabilities of Google's Gemini Pro Vision model for multimodal interactions. This playground allows users to experiment with image and text inputs to explore the model's understanding and response generation.
 
 ## Features
 
